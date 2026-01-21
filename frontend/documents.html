@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Documents - Knowledge Base</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app app-wide">
+        <header class="header">
+            <h1>Documents</h1>
+            <nav class="nav-links">
+                <a href="/" class="nav-link">Chat</a>
+                <a href="/documents" class="nav-link active">Documents</a>
+                <a href="/timeline" class="nav-link">Timeline</a>
+            </nav>
+        </header>
+
+        <div class="filters-bar">
+            <div class="filter-group">
+                <label for="type-filter">Type</label>
+                <select id="type-filter">
+                    <option value="">All Types</option>
+                    <option value="email_thread">Email Thread</option>
+                    <option value="meeting_notes">Meeting Notes</option>
+                    <option value="client_profile">Client Profile</option>
+                    <option value="report">Report</option>
+                    <option value="contract">Contract</option>
+                    <option value="proposal">Proposal</option>
+                    <option value="notes">Notes</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="search-input">Search</label>
+                <input type="text" id="search-input" placeholder="Search documents...">
+            </div>
+            <button id="refresh-btn" class="btn btn-secondary">Refresh</button>
+        </div>
+
+        <main class="documents-container">
+            <div id="documents-grid" class="documents-grid">
+                <div class="loading">Loading documents...</div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Document Detail Modal -->
+    <div id="detail-modal" class="modal hidden">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2 id="detail-title">Document Details</h2>
+                <button id="close-detail" class="modal-close">&times;</button>
+            </div>
+            <div id="detail-content" class="detail-content"></div>
+            <div class="modal-actions">
+                <button id="download-btn" class="btn btn-primary">Download Original</button>
+                <button id="delete-btn" class="btn btn-danger">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/documents.js"></script>
+</body>
+</html>

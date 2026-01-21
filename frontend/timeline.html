@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timeline - Knowledge Base</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app app-wide">
+        <header class="header">
+            <h1>Timeline</h1>
+            <nav class="nav-links">
+                <a href="/" class="nav-link">Chat</a>
+                <a href="/documents" class="nav-link">Documents</a>
+                <a href="/timeline" class="nav-link active">Timeline</a>
+            </nav>
+        </header>
+
+        <div class="filters-bar">
+            <div class="filter-group">
+                <label for="company-filter">Company</label>
+                <select id="company-filter">
+                    <option value="">All Companies</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="event-type-filter">Event Type</label>
+                <select id="event-type-filter">
+                    <option value="">All Types</option>
+                    <option value="meeting">Meetings</option>
+                    <option value="email">Emails</option>
+                    <option value="deadline">Deadlines</option>
+                    <option value="milestone">Milestones</option>
+                    <option value="action_item">Action Items</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="date-start">From</label>
+                <input type="date" id="date-start">
+            </div>
+            <div class="filter-group">
+                <label for="date-end">To</label>
+                <input type="date" id="date-end">
+            </div>
+            <button id="apply-filters" class="btn btn-primary">Apply</button>
+            <button id="clear-filters" class="btn btn-secondary">Clear</button>
+        </div>
+
+        <main class="timeline-container">
+            <div id="timeline" class="timeline">
+                <div class="loading">Loading timeline...</div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/timeline.js"></script>
+</body>
+</html>

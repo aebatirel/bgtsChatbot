@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Knowledge Base Chatbot</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <h1>Knowledge Base Assistant</h1>
+            <nav class="nav-links">
+                <a href="/" class="nav-link active">Chat</a>
+                <a href="/documents" class="nav-link">Documents</a>
+                <a href="/timeline" class="nav-link">Timeline</a>
+            </nav>
+            <button id="kb-toggle" class="toggle-btn" title="Toggle Knowledge Base Search">
+                <span class="toggle-icon">📚</span>
+                <span class="toggle-label">KB: ON</span>
+            </button>
+        </header>
+
+        <main class="chat-container">
+            <div id="messages" class="messages">
+                <div class="message assistant">
+                    <div class="message-content">
+                        Hello! I'm your knowledge base assistant. You can:
+                        <ul>
+                            <li>Ask me questions about your documents</li>
+                            <li>Upload documents using the 📎 button below</li>
+                            <li>Toggle KB search with the 📚 button above</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="input-area">
+            <div class="input-container">
+                <label for="file-input" class="file-label" title="Upload Document">
+                    📎
+                </label>
+                <input type="file" id="file-input" accept=".pdf,.docx,.doc,.txt,.md" hidden>
+                <input type="text" id="message-input" placeholder="Type your message..." autofocus>
+                <button id="send-btn" title="Send Message">
+                    ➤
+                </button>
+            </div>
+            <div id="file-preview" class="file-preview hidden"></div>
+        </footer>
+    </div>
+
+    <!-- Upload Confirmation Modal -->
+    <div id="upload-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Document Preview</h2>
+            <div id="modal-filename" class="modal-filename"></div>
+            <div id="modal-preview" class="modal-preview"></div>
+            <div id="modal-info" class="modal-info"></div>
+
+            <!-- Enhanced metadata section (shown after save) -->
+            <div id="modal-metadata" class="modal-metadata hidden">
+                <div class="metadata-item">
+                    <label>Suggested Name</label>
+                    <input type="text" id="modal-suggested-name" class="metadata-input">
+                </div>
+                <div class="metadata-item">
+                    <label>Document Type</label>
+                    <span id="modal-doc-type" class="metadata-value"></span>
+                </div>
+                <div class="metadata-item">
+                    <label>Summary</label>
+                    <p id="modal-summary" class="metadata-value"></p>
+                </div>
+                <div class="metadata-item" id="modal-companies-section">
+                    <label>Companies</label>
+                    <div id="modal-companies" class="tags-list"></div>
+                </div>
+            </div>
+
+            <!-- Date input for uncertain dates -->
+            <div id="modal-date-input" class="modal-date-input hidden">
+                <label>Please provide document date</label>
+                <input type="date" id="modal-date">
+                <small>The content appears to be dated but no date was found.</small>
+            </div>
+
+            <div class="modal-actions">
+                <button id="modal-save" class="btn btn-primary">Save to Knowledge Base</button>
+                <button id="modal-cancel" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
