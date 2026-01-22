@@ -70,7 +70,7 @@ Open http://localhost:5173 and start chatting!
 | **Vector Database** | [Qdrant](https://qdrant.tech/) | Open-source, high performance, local storage |
 | **RAG Framework** | [LangChain](https://docs.langchain.com/) | Flexible, well-documented |
 | **Database** | SQLite + SQLAlchemy | Simple, file-based, async support |
-| **Document Parsing** | PyMuPDF, python-docx | Fast PDF/DOCX extraction |
+| **Document Parsing** | pypdfium2, python-docx | Fast PDF/DOCX extraction (commercial-friendly) |
 | **Frontend** | React + Tailwind CSS | Modern liquid glass design with Motion.js animations |
 
 ### Key Decisions
@@ -933,7 +933,7 @@ aiosqlite>=0.19.0
 greenlet>=3.0.0
 
 # Document Processing
-pymupdf>=1.23.0
+pypdfium2>=4.0.0
 python-docx>=1.1.0
 
 # Utilities

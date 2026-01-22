@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-import fitz  # PyMuPDF
+import pypdfium2 as pdfium
 from docx import Document as DocxDocument
 
 from backend.config import get_settings
@@ -79,12 +79,16 @@ class DocumentProcessor:
         }
 
     def _extract_pdf(self, content: bytes) -> str:
-        """Extract text from a PDF file."""
+        """Extract text from a PDF file using pypdfium2."""
         text_parts = []
 
-        with fitz.open(stream=content, filetype="pdf") as doc:
-            for page in doc:
-                text_parts.append(page.get_text())
+        pdf = pdfium.PdfDocument(content)
+        for page in pdf:
+            textpage = page.get_textpage()
+            text_parts.append(textpage.get_text_bounded())
+            textpage.close()
+            page.close()
+        pdf.close()
 
         return "\n\n".join(text_parts)
 
