@@ -15,10 +15,13 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env and add your ANTHROPIC_API_KEY
 
-# 3. Start the backend
+# 3. Start PostgreSQL with pgvector (requires Docker)
+docker-compose up -d
+
+# 4. Start the backend
 uvicorn backend.main:app --reload
 
-# 4. Start the frontend (new terminal)
+# 5. Start the frontend (new terminal)
 cd frontend-react
 npm install
 npm run dev
@@ -33,7 +36,7 @@ Open http://localhost:5173 and start chatting!
 ### Core Features
 - **Chat Interface**: Conversational AI powered by Claude Sonnet 4.5
 - **Document Upload**: Support for PDF, DOCX, TXT, and MD files
-- **Knowledge Base**: Persistent vector storage with Qdrant
+- **Knowledge Base**: Persistent vector storage with PostgreSQL + pgvector
 - **RAG Pipeline**: Semantic search + LLM for accurate, sourced answers
 - **Document Preview**: See document contents before saving to KB
 - **Source Citations**: Responses include clickable references to source documents
@@ -67,18 +70,20 @@ Open http://localhost:5173 and start chatting!
 | **Backend Framework** | [FastAPI](https://fastapi.tiangolo.com/) | Async, high performance, excellent for RAG apps |
 | **LLM** | [Claude Sonnet 4.5](https://docs.anthropic.com/) | Best balance of capability/speed/cost |
 | **Embeddings** | [Sentence Transformers](https://www.sbert.net/) | Local, free, no API limits |
-| **Vector Database** | [Qdrant](https://qdrant.tech/) | Open-source, high performance, local storage |
+| **Database + Vectors** | [PostgreSQL + pgvector](https://github.com/pgvector/pgvector) | Unified storage, no AGPL concerns, excellent performance |
 | **RAG Framework** | [LangChain](https://docs.langchain.com/) | Flexible, well-documented |
-| **Database** | SQLite + SQLAlchemy | Simple, file-based, async support |
+| **ORM** | SQLAlchemy (async) | Type-safe, async PostgreSQL support with asyncpg |
 | **Document Parsing** | pypdfium2, python-docx | Fast PDF/DOCX extraction (commercial-friendly) |
 | **Frontend** | React + Tailwind CSS | Modern liquid glass design with Motion.js animations |
 
 ### Key Decisions
 
 - **Local embeddings over cloud APIs**: Uses `all-MiniLM-L6-v2` via sentence-transformers - free, fast, no rate limits
-- **Qdrant local mode**: No Docker required, stores data in `./data/qdrant_storage`
+- **PostgreSQL + pgvector**: Unified database for relational data and vectors (replaces Qdrant + SQLite dual storage)
+- **Docker for PostgreSQL**: Easy setup with `docker-compose up -d`
 - **No authentication for MVP**: Single user, can add OAuth/JWT later
 - **React frontend with liquid glass design**: Modern glassmorphism UI with Tailwind CSS v4 and Motion.js animations
+- **All permissive licenses**: No AGPL dependencies (avoided PyMuPDF, chose pypdfium2)
 
 ---
 
@@ -114,23 +119,23 @@ Open http://localhost:5173 and start chatting!
 │  │         Knowledge Base Service           │                │
 │  │  - Chunk documents                       │                │
 │  │  - Generate embeddings (local)           │                │
-│  │  - Store in Qdrant                       │                │
+│  │  - Store in PostgreSQL (pgvector)        │                │
 │  └─────────────────┬───────────────────────┘                │
 │                    │                                         │
 │                    ▼                                         │
 │  ┌─────────────────────────────────────────┐                │
 │  │         RAG Query Engine                 │                │
-│  │  - Semantic search                       │                │
+│  │  - Semantic search (pgvector)            │                │
 │  │  - Context retrieval                     │                │
 │  │  - Claude API for answers               │                │
 │  └─────────────────────────────────────────┘                │
 └─────────────────────────────────────────────────────────────┘
-            │                     │
-            ▼                     ▼
-┌───────────────────┐   ┌───────────────────┐
-│   Qdrant Vector   │   │  SQLite Database  │
-│     Database      │   │  (metadata)       │
-└───────────────────┘   └───────────────────┘
+                         │
+                         ▼
+          ┌───────────────────────────────┐
+          │   PostgreSQL + pgvector       │
+          │  (unified: data + vectors)    │
+          └───────────────────────────────┘
 ```
 
 ### Component Details
@@ -144,7 +149,7 @@ Open http://localhost:5173 and start chatting!
 | **Timeline Router** | `backend/routers/timeline.py` | Timeline events API with filters |
 | **Document Processor** | `backend/services/document_processor.py` | Parse PDF/DOCX/TXT |
 | **Document Intelligence** | `backend/services/document_intelligence.py` | LLM metadata extraction (Claude) |
-| **Knowledge Base** | `backend/services/knowledge_base.py` | Qdrant + local embeddings + time-aware search |
+| **Knowledge Base** | `backend/services/knowledge_base.py` | pgvector + local embeddings + time-aware search |
 | **Chat Service** | `backend/services/chat_service.py` | RAG orchestration + time-hint detection |
 | **LLM Service** | `backend/services/llm_service.py` | Claude API wrapper |
 | **Text Processing** | `backend/utils/text_processing.py` | Chunking, cleaning |
@@ -210,9 +215,10 @@ User selects file
 │   1. Chunk text with dates    │
 │   2. Generate embeddings      │
 │      (sentence-transformers)  │
-│   3. Store vectors in Qdrant  │
-│      with time metadata       │
-│   4. Save to SQLite:          │
+│   3. Bulk insert to PostgreSQL│
+│      (document_chunks table   │
+│       with pgvector)          │
+│   4. Also saves to PostgreSQL:│
 │      - Document record        │
 │      - DocumentMetadata       │
 │      - TimelineEvents         │
@@ -243,7 +249,7 @@ User sends message
 │   1. RETRIEVE                 │
 │   KnowledgeBaseService.search │
 │   - Embed query (local)       │
-│   - Search Qdrant (top 5)     │
+│   - pgvector cosine search    │
 │   - Return relevant chunks    │
 └─────────────┬─────────────────┘
               │
@@ -280,12 +286,14 @@ User sends message
 
 ## Database Schema
 
-### SQLite Tables (backend/models/database.py)
+### PostgreSQL Tables (backend/models/database.py)
+
+All data stored in a single PostgreSQL database with pgvector extension for vector similarity search.
 
 #### Documents Table
 ```sql
 CREATE TABLE documents (
-    id              INTEGER PRIMARY KEY,
+    id              SERIAL PRIMARY KEY,
     filename        VARCHAR(255) NOT NULL,
     original_filename VARCHAR(255) NOT NULL,
     file_type       VARCHAR(50) NOT NULL,
@@ -295,8 +303,8 @@ CREATE TABLE documents (
     stored_file_path VARCHAR(500),  -- Path to original file for download
     chunk_count     INTEGER DEFAULT 0,
     is_indexed      BOOLEAN DEFAULT FALSE,
-    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
@@ -356,21 +364,27 @@ CREATE TABLE messages (
 );
 ```
 
-### Qdrant Vector Schema
+#### Document Chunks Table (pgvector)
+```sql
+-- Requires: CREATE EXTENSION IF NOT EXISTS vector;
 
-```
-Collection: knowledge_base
-├── Vector: 384 dimensions (all-MiniLM-L6-v2)
-├── Distance: Cosine similarity
-└── Payload:
-    ├── document_id: int      # Links to SQLite documents.id
-    ├── filename: string      # Document filename
-    ├── chunk_index: int      # Position in document
-    ├── text: string          # Actual chunk content
-    ├── primary_date: string  # ISO date for time-aware search
-    ├── is_timeless: bool     # True for static content
-    ├── companies: string[]   # Companies mentioned in chunk
-    └── document_type: string # Type classification
+CREATE TABLE document_chunks (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id     INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    filename        VARCHAR(255) NOT NULL,  -- For source attribution
+    chunk_index     INTEGER NOT NULL,
+    text            TEXT NOT NULL,
+    embedding       VECTOR(384) NOT NULL,   -- all-MiniLM-L6-v2 dimensions
+    chunk_date      TIMESTAMP,              -- For time-aware search
+    is_timeless     BOOLEAN DEFAULT FALSE,
+    document_type   VARCHAR(50),
+    companies       TEXT[],                 -- PostgreSQL array
+    people          TEXT[],                 -- PostgreSQL array
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX ON document_chunks (document_id);
+-- pgvector uses cosine distance for similarity search
 ```
 
 ---
@@ -449,7 +463,7 @@ chatbot1/
 │   │   ├── __init__.py
 │   │   ├── document_processor.py   # PDF/DOCX/TXT parsing
 │   │   ├── document_intelligence.py # LLM metadata extraction (Claude)
-│   │   ├── knowledge_base.py       # Qdrant + embeddings + time-aware search
+│   │   ├── knowledge_base.py       # pgvector + embeddings + time-aware search
 │   │   ├── chat_service.py         # RAG orchestration + time-hint detection
 │   │   └── llm_service.py          # Claude API wrapper
 │   ├── routers/
@@ -487,9 +501,8 @@ chatbot1/
 │   ├── vite.config.ts          # Vite + Tailwind + API proxy
 │   └── package.json
 ├── data/
-│   ├── uploads/                # Stored original files for download
-│   ├── qdrant_storage/         # Qdrant local persistence
-│   └── chatbot.db              # SQLite database
+│   └── uploads/                # Stored original files for download
+├── docker-compose.yml          # PostgreSQL + pgvector container
 ├── venv/                       # Python virtual environment
 ├── requirements.txt            # Python dependencies
 ├── .env                        # API keys (gitignored)
@@ -642,8 +655,8 @@ Document Text
 | Parameter | Value |
 |-----------|-------|
 | Top K Results | 5 |
-| Distance Metric | Cosine Similarity |
-| Vector Store | Qdrant (local) |
+| Distance Metric | Cosine Distance (pgvector) |
+| Vector Store | PostgreSQL + pgvector |
 
 ### Time-Aware Search
 
@@ -803,12 +816,8 @@ All settings in `.env` (loaded via Pydantic Settings):
 # API Keys
 ANTHROPIC_API_KEY=sk-ant-...      # Required for Claude
 
-# Qdrant Configuration
-QDRANT_HOST=localhost              # Not used in local mode
-QDRANT_PORT=6333                   # Not used in local mode
-
-# Database
-DATABASE_URL=sqlite+aiosqlite:///./data/chatbot.db
+# Database (PostgreSQL with pgvector)
+DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:5432/chatbot
 
 # Upload settings
 UPLOAD_DIR=./data/uploads
@@ -825,6 +834,26 @@ CHUNK_OVERLAP=200
 TOP_K_RESULTS=5
 ```
 
+### Docker Compose (PostgreSQL + pgvector)
+
+```yaml
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: chatbot-postgres
+    environment:
+      POSTGRES_USER: chatbot
+      POSTGRES_PASSWORD: chatbot
+      POSTGRES_DB: chatbot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
 ---
 
 ## Usage Guide
@@ -839,7 +868,7 @@ Click the 📎 button to upload PDF, DOCX, TXT, or MD files. You'll see a previe
 After uploading, click "Save to Knowledge Base". The document will be:
 - **Analyzed by AI**: Auto-named, summarized, and metadata extracted
 - **Time-indexed**: Dates and events extracted for time-aware retrieval
-- **Chunked & embedded**: Stored in Qdrant for semantic search
+- **Chunked & embedded**: Stored in PostgreSQL (pgvector) for semantic search
 
 The modal will show the AI-generated name, summary, document type, and any extracted companies/people.
 
@@ -878,11 +907,11 @@ Based on the original Product Requirements Document:
 | Natural language query interface | ✅ | Claude Sonnet 4.5 |
 | Document upload (PDF, DOCX, TXT) | ✅ | PyMuPDF + python-docx |
 | Document preview before saving | ✅ | 500 char preview |
-| Knowledge base storage | ✅ | Qdrant + SQLite |
+| Knowledge base storage | ✅ | PostgreSQL + pgvector |
 | Semantic search with RAG | ✅ | Local embeddings (sentence-transformers) |
 | Source citations in responses | ✅ | Clickable links to document details |
 | Chat conversation history | ✅ | Session-based |
-| Document deletion | ✅ | Removes from Qdrant + SQLite |
+| Document deletion | ✅ | Removes from PostgreSQL (cascades to chunks) |
 | Health check endpoint | ✅ | `/api/health` |
 | **LLM document intelligence** | ✅ | Auto-naming, summaries, metadata extraction |
 | **Time-aware RAG** | ✅ | Date extraction, recency boost, temporal queries |
@@ -924,12 +953,10 @@ langchain>=0.3.0
 langchain-anthropic>=0.3.0
 langchain-text-splitters>=0.3.0
 
-# Vector Database
-qdrant-client>=1.7.0
-
-# Database
+# Database (PostgreSQL + pgvector)
 sqlalchemy>=2.0.0
-aiosqlite>=0.19.0
+asyncpg>=0.29.0
+pgvector>=0.2.5
 greenlet>=3.0.0
 
 # Document Processing
@@ -950,16 +977,16 @@ aiofiles>=23.2.1
 ### Documentation
 - [FastAPI Docs](https://fastapi.tiangolo.com/)
 - [LangChain RAG Tutorial](https://docs.langchain.com/oss/python/langchain/rag)
-- [Qdrant Documentation](https://qdrant.tech/documentation/)
+- [pgvector Documentation](https://github.com/pgvector/pgvector)
 - [Anthropic Claude API](https://docs.anthropic.com/)
 - [Sentence Transformers](https://www.sbert.net/)
+- [SQLAlchemy Async](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html)
 
 ### Research & Best Practices
 - [RAG Best Practices (TowardsDataScience)](https://towardsdatascience.com/six-lessons-learned-building-rag-systems-in-production/)
 - [Vector Database Comparison (DataCamp)](https://www.datacamp.com/blog/the-top-5-vector-databases)
 - [Embedding Models Comparison](https://research.aimultiple.com/embedding-models/)
-- [Qdrant How to Choose Embeddings](https://qdrant.tech/articles/how-to-choose-an-embedding-model/)
-- [Qdrant FastEmbed](https://github.com/qdrant/fastembed)
+- [pgvector Performance Guide](https://github.com/pgvector/pgvector#performance)
 
 ### Templates & Examples
 - [FastAPI + LangChain RAG](https://github.com/mazzasaverio/fastapi-langchain-rag)
@@ -976,12 +1003,13 @@ aiofiles>=23.2.1
 4. **CRM Integration**: HubSpot API for contact/company data
 5. **Reranking**: Add cross-encoder reranking for better retrieval
 6. **Document Types**: Add support for XLSX, images (OCR)
-7. **Docker**: Containerize for easier deployment
-8. **Hybrid Search**: Combine BM25 keyword search with vector search
+7. **Full Dockerization**: Containerize the entire app (backend + frontend)
+8. **Hybrid Search**: Combine BM25 keyword search with vector search (PostgreSQL full-text + pgvector)
 9. **Query Rewriting**: LLM-based query expansion for better retrieval
 10. **Company/Person Profiles**: Auto-generate profiles from extracted mentions
 11. **Relationship Graph**: Visualize connections between companies, people, and documents
 12. **Calendar Integration**: Sync timeline events with Google/Outlook calendars
+13. **HNSW Index**: Add pgvector HNSW index for faster similarity search at scale
 
 ---
 
@@ -989,6 +1017,9 @@ aiofiles>=23.2.1
 
 Private/Internal Use
 
+All dependencies use permissive licenses (MIT, Apache 2.0, BSD, PostgreSQL License). No AGPL dependencies.
+
 ---
 
-*Built with Claude Code - January 2026*
+*Built with Claude Code - January 2025*
+*Migrated to PostgreSQL + pgvector - January 2026*
