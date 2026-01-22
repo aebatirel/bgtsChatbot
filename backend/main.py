@@ -21,7 +21,6 @@ async def lifespan(app: FastAPI):
 
     # Create upload directory if it doesn't exist
     os.makedirs(settings.upload_dir, exist_ok=True)
-    os.makedirs("./data/qdrant_storage", exist_ok=True)
 
     # Initialize database
     await init_db()
@@ -61,8 +60,8 @@ async def health_check():
         status="healthy",
         version="1.0.0",
         services={
-            "database": "connected",
-            "qdrant": "available",
+            "database": "postgresql",
+            "vector_store": "pgvector",
             "claude_model": settings.claude_model,
             "embedding_model": settings.embedding_model,
         },

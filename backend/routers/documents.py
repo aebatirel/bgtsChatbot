@@ -178,12 +178,13 @@ async def save_document(
             )
             db.add(timeline_event)
 
-    # Step 7: Index with time-aware chunks in Qdrant
+    # Step 7: Index with time-aware chunks in PostgreSQL (pgvector)
     chunk_count = await kb.index_document_with_metadata(
         document_id=doc.id,
         filename=doc.filename,
         text=temp_file["full_text"],
         extraction=extraction,
+        db=db,
     )
 
     doc.chunk_count = chunk_count
@@ -267,7 +268,7 @@ async def delete_document(document_id: int, db: AsyncSession = Depends(get_db)):
 
     # Remove from vector store
     kb = get_knowledge_base_service()
-    kb.delete_document(document_id)
+    await kb.delete_document(document_id, db=db)
 
     # Remove stored file if exists
     if doc.stored_file_path and os.path.exists(doc.stored_file_path):

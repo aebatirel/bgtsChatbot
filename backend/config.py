@@ -11,13 +11,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     voyage_api_key: str = ""
 
-    # Qdrant Configuration
-    qdrant_host: str = "localhost"
-    qdrant_port: int = 6333
-    qdrant_collection_name: str = "knowledge_base"
-
-    # Database
-    database_url: str = "sqlite+aiosqlite:///./data/chatbot.db"
+    # Database (PostgreSQL with pgvector)
+    database_url: str = "postgresql+asyncpg://chatbot:chatbot@localhost:5432/chatbot"
 
     # Upload settings
     upload_dir: str = "./data/uploads"

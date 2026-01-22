@@ -1,8 +1,12 @@
 """SQLAlchemy database models and session management."""
 
+import uuid
 from datetime import datetime
 from typing import AsyncGenerator
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean
+
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, text
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -39,6 +43,9 @@ class Document(Base):
     )
     timeline_events = relationship(
         "TimelineEvent", back_populates="document", cascade="all, delete-orphan"
+    )
+    chunks = relationship(
+        "DocumentChunk", back_populates="document", cascade="all, delete-orphan"
     )
 
     def __repr__(self):
@@ -142,6 +149,40 @@ class Message(Base):
         return f"<Message(id={self.id}, role='{self.role}')>"
 
 
+class DocumentChunk(Base):
+    """Vector embedding chunk for a document (replaces Qdrant)."""
+
+    __tablename__ = "document_chunks"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(
+        Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Chunk content
+    filename = Column(String(255), nullable=False)  # Document filename for source attribution
+    chunk_index = Column(Integer, nullable=False)
+    text = Column(Text, nullable=False)
+
+    # Vector embedding (384 dimensions for all-MiniLM-L6-v2)
+    embedding = Column(Vector(384), nullable=False)
+
+    # Time-aware metadata (previously in Qdrant payload)
+    chunk_date = Column(DateTime, nullable=True)
+    is_timeless = Column(Boolean, default=False)
+    document_type = Column(String(50), nullable=True)
+    companies = Column(ARRAY(String), default=[])
+    people = Column(ARRAY(String), default=[])
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationship
+    document = relationship("Document", back_populates="chunks")
+
+    def __repr__(self):
+        return f"<DocumentChunk(id={self.id}, document_id={self.document_id}, chunk_index={self.chunk_index})>"
+
+
 # Database engine and session setup
 settings = get_settings()
 engine = create_async_engine(settings.database_url, echo=False)
@@ -149,8 +190,11 @@ async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_
 
 
 async def init_db():
-    """Initialize the database by creating all tables."""
+    """Initialize the database with pgvector extension and all tables."""
     async with engine.begin() as conn:
+        # Enable pgvector extension
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # Create all tables
         await conn.run_sync(Base.metadata.create_all)
 
 

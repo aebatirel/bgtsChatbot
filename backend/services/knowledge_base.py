@@ -1,16 +1,16 @@
-"""Knowledge base service for vector storage and retrieval."""
+"""Knowledge base service for vector storage and retrieval using pgvector."""
 
-import uuid
 from datetime import datetime
 from typing import Optional
 
 from sentence_transformers import SentenceTransformer
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, MatchAny, Range
+from sqlalchemy import select, delete, func, and_
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.utils.text_processing import chunk_text
 from backend.models.schemas import DocumentExtraction
+from backend.models.database import DocumentChunk, async_session_maker
 
 
 class LocalEmbeddings:
@@ -31,22 +31,11 @@ class LocalEmbeddings:
 
 
 class KnowledgeBaseService:
-    """Service for managing the vector knowledge base."""
+    """Service for managing the vector knowledge base with pgvector."""
 
     def __init__(self):
         self.settings = get_settings()
-        self._client: Optional[QdrantClient] = None
         self._embeddings: Optional[LocalEmbeddings] = None
-
-    @property
-    def client(self) -> QdrantClient:
-        """Get or create Qdrant client."""
-        if self._client is None:
-            self._client = QdrantClient(
-                path="./data/qdrant_storage"  # Local file-based storage
-            )
-            self._ensure_collection()
-        return self._client
 
     @property
     def embeddings(self) -> LocalEmbeddings:
@@ -57,57 +46,43 @@ class KnowledgeBaseService:
             )
         return self._embeddings
 
-    def _ensure_collection(self):
-        """Ensure the collection exists in Qdrant."""
-        collections = self.client.get_collections().collections
-        collection_names = [c.name for c in collections]
-
-        if self.settings.qdrant_collection_name not in collection_names:
-            self.client.create_collection(
-                collection_name=self.settings.qdrant_collection_name,
-                vectors_config=VectorParams(
-                    size=self.settings.embedding_dimensions,
-                    distance=Distance.COSINE,
-                ),
-            )
-
     async def index_document(
-        self, document_id: int, filename: str, text: str
+        self, document_id: int, filename: str, text: str, db: AsyncSession = None
     ) -> int:
         """Index a document into the knowledge base (basic version)."""
-        # Chunk the text
         chunks = chunk_text(text)
 
         if not chunks:
             return 0
 
-        # Generate embeddings for all chunks
         chunk_embeddings = await self.embeddings.aembed_documents(chunks)
 
-        # Create points for Qdrant
-        points = []
-        for i, (chunk, embedding) in enumerate(zip(chunks, chunk_embeddings)):
-            point_id = str(uuid.uuid4())
-            points.append(
-                PointStruct(
-                    id=point_id,
-                    vector=embedding,
-                    payload={
-                        "document_id": document_id,
-                        "filename": filename,
-                        "chunk_index": i,
-                        "text": chunk,
-                    },
+        should_close = False
+        if db is None:
+            db = async_session_maker()
+            should_close = True
+
+        try:
+            # Build all chunk records first, then bulk insert
+            chunk_records = [
+                DocumentChunk(
+                    document_id=document_id,
+                    filename=filename,
+                    chunk_index=i,
+                    text=chunk,
+                    embedding=embedding,
                 )
-            )
+                for i, (chunk, embedding) in enumerate(zip(chunks, chunk_embeddings))
+            ]
+            db.add_all(chunk_records)
+            await db.flush()
+            if should_close:
+                await db.commit()
 
-        # Upsert points to Qdrant
-        self.client.upsert(
-            collection_name=self.settings.qdrant_collection_name,
-            points=points,
-        )
-
-        return len(chunks)
+            return len(chunks)
+        finally:
+            if should_close:
+                await db.close()
 
     async def index_document_with_metadata(
         self,
@@ -115,59 +90,62 @@ class KnowledgeBaseService:
         filename: str,
         text: str,
         extraction: DocumentExtraction,
+        db: AsyncSession = None,
     ) -> int:
         """Index a document with time-aware metadata."""
         from backend.services.document_intelligence import get_document_intelligence_service
 
-        # Chunk the text
         chunks = chunk_text(text)
 
         if not chunks:
             return 0
 
-        # Get chunk-level date assignments
         intelligence = get_document_intelligence_service()
         chunk_dates = intelligence.assign_chunk_dates(chunks, extraction)
-
-        # Generate embeddings for all chunks
         chunk_embeddings = await self.embeddings.aembed_documents(chunks)
 
-        # Create points for Qdrant with enhanced payload
-        points = []
-        for i, (chunk, embedding) in enumerate(zip(chunks, chunk_embeddings)):
-            point_id = str(uuid.uuid4())
+        should_close = False
+        if db is None:
+            db = async_session_maker()
+            should_close = True
 
-            # Get date info for this chunk
-            chunk_info = chunk_dates[i] if i < len(chunk_dates) else {}
-            chunk_date = chunk_info.get("chunk_date")
-            is_timeless = chunk_info.get("is_timeless", extraction.is_timeless)
+        try:
+            # Build all chunk records first, then bulk insert
+            chunk_records = []
+            for i, (chunk, embedding) in enumerate(zip(chunks, chunk_embeddings)):
+                chunk_info = chunk_dates[i] if i < len(chunk_dates) else {}
+                chunk_date_str = chunk_info.get("chunk_date")
+                chunk_date = None
+                if chunk_date_str:
+                    try:
+                        chunk_date = datetime.fromisoformat(chunk_date_str)
+                    except (ValueError, TypeError):
+                        pass
 
-            points.append(
-                PointStruct(
-                    id=point_id,
-                    vector=embedding,
-                    payload={
-                        "document_id": document_id,
-                        "filename": filename,
-                        "chunk_index": i,
-                        "text": chunk,
-                        # Time-aware fields
-                        "chunk_date": chunk_date,
-                        "is_timeless": is_timeless,
-                        "document_type": extraction.document_type.value,
-                        "companies": extraction.companies,
-                        "people": extraction.people,
-                    },
-                )
-            )
+                is_timeless = chunk_info.get("is_timeless", extraction.is_timeless)
 
-        # Upsert points to Qdrant
-        self.client.upsert(
-            collection_name=self.settings.qdrant_collection_name,
-            points=points,
-        )
+                chunk_records.append(DocumentChunk(
+                    document_id=document_id,
+                    filename=filename,
+                    chunk_index=i,
+                    text=chunk,
+                    embedding=embedding,
+                    chunk_date=chunk_date,
+                    is_timeless=is_timeless,
+                    document_type=extraction.document_type.value,
+                    companies=extraction.companies or [],
+                    people=extraction.people or [],
+                ))
 
-        return len(chunks)
+            db.add_all(chunk_records)
+            await db.flush()
+            if should_close:
+                await db.commit()
+
+            return len(chunks)
+        finally:
+            if should_close:
+                await db.close()
 
     async def search(
         self,
@@ -179,83 +157,85 @@ class KnowledgeBaseService:
         prioritize_recent: bool = False,
         companies: list[str] = None,
         include_timeless: bool = True,
+        db: AsyncSession = None,
     ) -> list[dict]:
         """Search the knowledge base with optional time-aware filtering."""
         if top_k is None:
             top_k = self.settings.top_k_results
 
-        # Generate embedding for the query
         query_embedding = await self.embeddings.aembed_query(query)
-
-        # Build filter conditions
-        must_conditions = []
-
-        if document_ids:
-            must_conditions.append(
-                FieldCondition(key="document_id", match=MatchAny(any=document_ids))
-            )
-
-        if companies:
-            # Match any of the specified companies
-            for company in companies:
-                must_conditions.append(
-                    FieldCondition(key="companies", match=MatchAny(any=[company]))
-                )
-
-        # Build filter
-        filter_condition = None
-        if must_conditions:
-            filter_condition = Filter(must=must_conditions)
-
-        # Fetch more results if we'll be re-ranking
         fetch_limit = top_k * 2 if prioritize_recent else top_k
 
-        # Search in Qdrant
-        results = self.client.query_points(
-            collection_name=self.settings.qdrant_collection_name,
-            query=query_embedding,
-            limit=fetch_limit,
-            query_filter=filter_condition,
-        )
+        should_close = False
+        if db is None:
+            db = async_session_maker()
+            should_close = True
 
-        # Format results
-        formatted_results = []
-        for hit in results.points:
-            result = {
-                "document_id": hit.payload["document_id"],
-                "filename": hit.payload["filename"],
-                "chunk_index": hit.payload["chunk_index"],
-                "text": hit.payload["text"],
-                "score": hit.score,
-                "chunk_date": hit.payload.get("chunk_date"),
-                "is_timeless": hit.payload.get("is_timeless", False),
-                "document_type": hit.payload.get("document_type"),
-                "companies": hit.payload.get("companies", []),
-            }
+        try:
+            # pgvector cosine_distance: smaller = more similar
+            # Convert to similarity score: 1 - distance
+            distance_expr = DocumentChunk.embedding.cosine_distance(query_embedding)
 
-            # Apply date filtering in post-processing (more flexible)
-            chunk_date = result["chunk_date"]
-            if chunk_date:
-                try:
-                    chunk_datetime = datetime.fromisoformat(chunk_date)
-                    if date_start and chunk_datetime < date_start:
+            stmt = select(
+                DocumentChunk,
+                (1 - distance_expr).label('score')
+            )
+
+            # Build filter conditions
+            conditions = []
+
+            if document_ids:
+                conditions.append(DocumentChunk.document_id.in_(document_ids))
+
+            if companies:
+                # Match any of the specified companies using array overlap
+                conditions.append(DocumentChunk.companies.overlap(companies))
+
+            if conditions:
+                stmt = stmt.where(and_(*conditions))
+
+            # Order by distance (ascending = most similar first)
+            stmt = stmt.order_by(distance_expr).limit(fetch_limit)
+
+            result = await db.execute(stmt)
+            rows = result.all()
+
+            # Format results
+            formatted_results = []
+            for chunk, score in rows:
+                result_dict = {
+                    "document_id": chunk.document_id,
+                    "filename": chunk.filename,
+                    "chunk_index": chunk.chunk_index,
+                    "text": chunk.text,
+                    "score": float(score),
+                    "chunk_date": chunk.chunk_date.isoformat() if chunk.chunk_date else None,
+                    "is_timeless": chunk.is_timeless,
+                    "document_type": chunk.document_type,
+                    "companies": chunk.companies or [],
+                }
+
+                # Apply date filtering in post-processing
+                chunk_date = chunk.chunk_date
+                if chunk_date:
+                    if date_start and chunk_date < date_start:
                         continue
-                    if date_end and chunk_datetime > date_end:
+                    if date_end and chunk_date > date_end:
                         continue
-                except (ValueError, TypeError):
-                    pass
-            elif not include_timeless and not result["is_timeless"]:
-                # Skip undated non-timeless content if filtering by date
-                if date_start or date_end:
-                    continue
+                elif not include_timeless and not result_dict["is_timeless"]:
+                    if date_start or date_end:
+                        continue
 
-            formatted_results.append(result)
+                formatted_results.append(result_dict)
 
-        # Re-rank with recency boost if requested
-        if prioritize_recent:
-            formatted_results = self._rerank_with_recency(formatted_results)
+            # Re-rank with recency boost if requested
+            if prioritize_recent:
+                formatted_results = self._rerank_with_recency(formatted_results)
 
-        return formatted_results[:top_k]
+            return formatted_results[:top_k]
+        finally:
+            if should_close:
+                await db.close()
 
     def _rerank_with_recency(self, results: list[dict]) -> list[dict]:
         """Boost scores for more recent content."""
@@ -263,17 +243,14 @@ class KnowledgeBaseService:
 
         for result in results:
             if result.get("is_timeless"):
-                # Timeless content gets no boost but no penalty
                 continue
 
-            chunk_date = result.get("chunk_date")
-            if chunk_date:
+            chunk_date_str = result.get("chunk_date")
+            if chunk_date_str:
                 try:
-                    date = datetime.fromisoformat(chunk_date)
+                    date = datetime.fromisoformat(chunk_date_str)
                     days_ago = (now - date).days
 
-                    # Recency boost: recent content (< 30 days) gets up to 20% boost
-                    # Older content (> 365 days) gets slight penalty
                     if days_ago < 30:
                         boost = 0.2 * (1 - days_ago / 30)
                     elif days_ago > 365:
@@ -285,33 +262,41 @@ class KnowledgeBaseService:
                 except (ValueError, TypeError):
                     pass
 
-        # Re-sort by adjusted score
         return sorted(results, key=lambda x: x["score"], reverse=True)
 
-    def delete_document(self, document_id: int) -> bool:
+    async def delete_document(self, document_id: int, db: AsyncSession = None) -> bool:
         """Delete all chunks for a document from the knowledge base."""
-        self.client.delete(
-            collection_name=self.settings.qdrant_collection_name,
-            points_selector={
-                "filter": {
-                    "must": [
-                        {
-                            "key": "document_id",
-                            "match": {"value": document_id},
-                        }
-                    ]
-                }
-            },
-        )
-        return True
+        should_close = False
+        if db is None:
+            db = async_session_maker()
+            should_close = True
 
-    def get_document_count(self) -> int:
-        """Get the total number of unique documents in the knowledge base."""
         try:
-            collection_info = self.client.get_collection(self.settings.qdrant_collection_name)
-            return collection_info.points_count
-        except Exception:
-            return 0
+            stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
+            await db.execute(stmt)
+
+            if should_close:
+                await db.commit()
+
+            return True
+        finally:
+            if should_close:
+                await db.close()
+
+    async def get_document_count(self, db: AsyncSession = None) -> int:
+        """Get the total number of chunks in the knowledge base."""
+        should_close = False
+        if db is None:
+            db = async_session_maker()
+            should_close = True
+
+        try:
+            stmt = select(func.count()).select_from(DocumentChunk)
+            result = await db.execute(stmt)
+            return result.scalar() or 0
+        finally:
+            if should_close:
+                await db.close()
 
 
 # Singleton instance
